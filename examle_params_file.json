@@ -1,5 +1,6 @@
 {
     "Dataset_Directory": "Path\\To\\Dataset",
+    "Output_Directory": "Path\\To\\Outputs",
     "Tokens" : {
         "Flight_Data_Token": "",
         "Weather_Query_Token": ""
