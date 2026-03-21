@@ -1,0 +1,7 @@
+{
+    "Dataset_Directory": "Path\\To\\Dataset",
+    "Tokens" : {
+        "Flight_Data_Token": "",
+        "Weather_Query_Token": ""
+    }
+}
