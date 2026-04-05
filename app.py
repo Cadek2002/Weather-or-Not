@@ -49,7 +49,18 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
         print(lat, lon)
 
         # Call the Open-Meteo API
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto"
+        # https://open-meteo.com/en/docs
+        # url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto"
+        hourly_vars = "temperature_2m,precipitation_probability,precipitation,rain,snowfall,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&hourly={hourly_vars}"
+            f"&temperature_unit=fahrenheit"
+            f"&precipitation_unit=inch"
+            f"&wind_speed_unit=mph"
+            f"&timezone=auto"
+        )
         try:
             response = requests.get(url)
             response.raise_for_status()  # Check if the request was successful
