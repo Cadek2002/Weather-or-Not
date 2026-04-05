@@ -4,6 +4,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
+import requests
+
+# --- Initialize session state for weather inputs ---
+# This ensures the values don't reset when the page reruns
+# TODO: create a better list of values that we will predict on
+if "expected_temp" not in st.session_state:
+    st.session_state.expected_temp = 70.0
+if "expected_precip" not in st.session_state:
+    st.session_state.expected_precip = 0.0
 
 # Load the airport codes and airport names
 airport_df = pd.read_csv('airport_code_name_lookup.csv')
@@ -25,10 +34,48 @@ flight_time = st.sidebar.time_input("Time", datetime.datetime.now().time())
 origin_airport = st.sidebar.selectbox("Origin Airport", airport_options)
 dest_airport = st.sidebar.selectbox("Destination Airport", airport_options)
 
+# --- Automatic weather fetching ---
+if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
+    # Get the FAA code from the dropdown selection
+    origin_code = origin_airport.split(" ")[0]
+    dest_code = dest_airport.split(" ")[0]
+    print(origin_code)
+
+    # Get the LAT/LON for the origin airport
+    airport_data = airport_df[airport_df['AIRPORT'] == origin_code]
+    if not airport_data.empty:
+        lat = airport_data.iloc[0]['LAT']
+        lon = airport_data.iloc[0]['LON']
+        print(lat, lon)
+
+        # Call the Open-Meteo API
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto"
+        try:
+            response = requests.get(url)
+            response.raise_for_status()  # Check if the request was successful
+            weather_data = response.json()
+
+            # Format our input timing to match API time format
+            target_hour = flight_time.strftime('%H:00')
+            target_datetime_str = f'{flight_date.isoformat()}T{target_hour}'
+
+            times = weather_data['hourly']['time']
+            if target_datetime_str in times:
+                index = times.index(target_datetime_str)
+                st.session_state.expected_temp = weather_data['hourly']['temperature_2m'][index]
+                st.session_state.expected_precip = weather_data['hourly']['precipitation'][index]
+                st.success("Weather forecast fetched successfully!")
+            else:
+                st.warning("Weather data for the selected date and time is not available.")
+        except requests.RequestException as e:
+            st.error(f"Error fetching weather data: {e}")
+    else:
+        st.error("Could not find the selected airport in the dataset.")
+
 # Weather inputs
 # TODO: create automatic weather information gathering using some weather API
-expected_temp = st.sidebar.number_input("Expected Temp (°F)", value=70)
-expected_precip = st.sidebar.number_input("Expected Precip (in)", min_value=0.0, value=0.0, step=0.1)
+expected_temp = st.sidebar.number_input("Expected Temp (°F)", value=st.session_state.expected_temp)
+expected_precip = st.sidebar.number_input("Expected Precip (in)", min_value=0.0, value=st.session_state.expected_precip, step=0.1)
 
 # Predict button
 predict_button = st.sidebar.button("Predict Delay", type="primary")
@@ -69,4 +116,4 @@ if predict_button:
 
 else:
     # This shows when the app first loads before the button is clicked
-    st.info("👈 Enter the flight parameters in the sidebar and click 'Predict Delay' to see the results.")
+    st.info("Enter the flight parameters in the sidebar and click 'Predict Delay' to see the results.")
