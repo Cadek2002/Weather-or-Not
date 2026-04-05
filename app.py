@@ -5,6 +5,10 @@ import pandas as pd
 import numpy as np
 import datetime
 
+# Load the airport codes and airport names
+airport_df = pd.read_csv('airport_code_name_lookup.csv')
+airport_options = airport_df.apply(lambda row: f"{row['AIRPORT']} ({row['STATION NAME']})", axis=1).tolist()
+
 st.set_page_config(page_title="Weather or Not",
                    page_icon="✈️",
                    layout="wide")
@@ -18,11 +22,8 @@ flight_date = st.sidebar.date_input("Date", datetime.date.today())
 flight_time = st.sidebar.time_input("Time", datetime.datetime.now().time())
 
 # Airport dropdowns (using placeholder data)
-# TODO: replace with actual airport codes and names from dataset
-origin_airport = st.sidebar.selectbox("Origin Airport",
-                                      ["DTW (Detroit)", "ORD (Chicago)", "ATL (Atlanta)", "JFK (New York)"])
-dest_airport = st.sidebar.selectbox("Destination Airport",
-                                    ["LAX (Los Angeles)", "SFO (San Francisco)", "DEN (Denver)", "MCO (Orlando)"])
+origin_airport = st.sidebar.selectbox("Origin Airport", airport_options)
+dest_airport = st.sidebar.selectbox("Destination Airport", airport_options)
 
 # Weather inputs
 # TODO: create automatic weather information gathering using some weather API
