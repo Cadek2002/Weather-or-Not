@@ -54,7 +54,8 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
             response = requests.get(url)
             response.raise_for_status()  # Check if the request was successful
             weather_data = response.json()
-
+            print(weather_data)
+            
             # Format our input timing to match API time format
             target_hour = flight_time.strftime('%H:00')
             target_datetime_str = f'{flight_date.isoformat()}T{target_hour}'
@@ -73,7 +74,6 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
         st.error("Could not find the selected airport in the dataset.")
 
 # Weather inputs
-# TODO: create automatic weather information gathering using some weather API
 expected_temp = st.sidebar.number_input("Expected Temp (°F)", value=st.session_state.expected_temp)
 expected_precip = st.sidebar.number_input("Expected Precip (in)", min_value=0.0, value=st.session_state.expected_precip, step=0.1)
 
