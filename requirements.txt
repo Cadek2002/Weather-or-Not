@@ -2,3 +2,7 @@ streamlit
 pandas
 scikit-learn
 joblib
+holidays
+seaborn
+matplotlib
+datetime
