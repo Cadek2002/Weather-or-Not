@@ -6,3 +6,4 @@ holidays
 seaborn
 matplotlib
 datetime
+requests

@@ -2,17 +2,26 @@
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import datetime
 import requests
 
+def meters_to_miles(meters):
+    return meters * 0.000621371
+
+weather_dict = {
+    "expected_temp": {"label": "Expected Temp (°F)", "weather_key": "temperature_2m", "min": -50.0, "max": 150.0, "init": 70.0, "step": 0.1, "input_object": None},
+    "expected_precip": {"label": "Expected Precip (in)", "weather_key": "precipitation", "min": 0.0, "max": 10.0, "init": 0.0, "step": 0.1, "input_object": None},
+    "expected_cloud_cover": {"label": "Expected Cloud Cover (%)", "weather_key": "cloud_cover", "min": 0.0, "max": 100.0, "init": 0.0, "step": 1.0, "input_object": None},
+    "expected_wind_speed": {"label": "Expected Wind Speed (mph)", "weather_key": "wind_speed_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
+    "expected_wind_gust_speed": {"label": "Expected Wind Gust Speed (mph)", "weather_key": "wind_gusts_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
+    "expected_visibility": {"label": "Expected Visibility (miles)", "weather_key": "visibility", "min": 0.0, "max": 1000.0, "init": 10.0, "step": 0.1, "input_object": None}
+}
+
 # --- Initialize session state for weather inputs ---
 # This ensures the values don't reset when the page reruns
-# TODO: create a better list of values that we will predict on
-if "expected_temp" not in st.session_state:
-    st.session_state.expected_temp = 70.0
-if "expected_precip" not in st.session_state:
-    st.session_state.expected_precip = 0.0
+for key, params in weather_dict.items():
+    if key not in st.session_state:
+        st.session_state[key] = params["init"]
 
 # Load the airport codes and airport names
 airport_df = pd.read_csv('airport_code_name_lookup.csv')
@@ -66,17 +75,34 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
             response.raise_for_status()  # Check if the request was successful
             weather_data = response.json()
             print(weather_data)
+            print(weather_data['hourly'].keys())
             
             # Format our input timing to match API time format
             target_hour = flight_time.strftime('%H:00')
             target_datetime_str = f'{flight_date.isoformat()}T{target_hour}'
 
+            # For imputing exact time weather
+            delta = datetime.timedelta(hours=1)
+            flight_time_plus1 = (datetime.datetime.combine(flight_date, flight_time) + delta).time()
+            target_hour_post = flight_time_plus1.strftime('%H:00')
+            target_datetime_str_post = f'{flight_date.isoformat()}T{target_hour_post}'
+
             times = weather_data['hourly']['time']
-            if target_datetime_str in times:
-                index = times.index(target_datetime_str)
-                st.session_state.expected_temp = weather_data['hourly']['temperature_2m'][index]
-                st.session_state.expected_precip = weather_data['hourly']['precipitation'][index]
-                st.success("Weather forecast fetched successfully!")
+            if target_datetime_str in times and target_datetime_str_post in times:
+                for key, params in weather_dict.items():
+                    # Update the expected weather inputs
+                    weather_api_key = params["weather_key"]
+                    index = times.index(target_datetime_str)
+                    index_post = times.index(target_datetime_str_post)
+                    factor = (flight_time.minute) / 60  # Proportion of the hour that has passed
+                    # To impute the exact time weather with a weighted average of the current and next hour
+                    if key == "expected_visibility":
+                        # Convert visibility from meters to miles for just visibility
+                        st.session_state[key] = meters_to_miles((1 - factor) * weather_data['hourly'][weather_api_key][index]
+                                              + factor * weather_data['hourly'][weather_api_key][index_post])
+                    else:
+                        st.session_state[key] = ((1 - factor) * weather_data['hourly'][weather_api_key][index]
+                                                  + factor * weather_data['hourly'][weather_api_key][index_post])
             else:
                 st.warning("Weather data for the selected date and time is not available.")
         except requests.RequestException as e:
@@ -84,9 +110,15 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
     else:
         st.error("Could not find the selected airport in the dataset.")
 
-# Weather inputs
-expected_temp = st.sidebar.number_input("Expected Temp (°F)", value=st.session_state.expected_temp)
-expected_precip = st.sidebar.number_input("Expected Precip (in)", min_value=0.0, value=st.session_state.expected_precip, step=0.1)
+# Create Weather inputs on sidebar
+for key, params in weather_dict.items():
+    params["input_object"] = st.sidebar.number_input(
+        label=params["label"],
+        min_value=params["min"],
+        max_value=params["max"],
+        value=st.session_state[key],
+        step=params["step"]
+    )
 
 # Predict button
 predict_button = st.sidebar.button("Predict Delay", type="primary")
@@ -126,5 +158,5 @@ if predict_button:
         st.bar_chart(chart_data)
 
 else:
-    # This shows when the app first loads before the button is clicked
+    # This shows when the app first loads before the predict button is clicked
     st.info("Enter the flight parameters in the sidebar and click 'Predict Delay' to see the results.")
