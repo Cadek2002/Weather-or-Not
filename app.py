@@ -11,9 +11,9 @@ def meters_to_miles(meters):
 weather_dict = {
     "expected_temp": {"label": "Expected Temp (°F)", "weather_key": "temperature_2m", "min": -50.0, "max": 150.0, "init": 70.0, "step": 0.1, "input_object": None},
     "expected_precip": {"label": "Expected Precip (in)", "weather_key": "precipitation", "min": 0.0, "max": 10.0, "init": 0.0, "step": 0.1, "input_object": None},
-    "expected_cloud_cover": {"label": "Expected Cloud Cover (%)", "weather_key": "cloud_cover", "min": 0.0, "max": 100.0, "init": 0.0, "step": 1.0, "input_object": None},
     "expected_wind_speed": {"label": "Expected Wind Speed (mph)", "weather_key": "wind_speed_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
     "expected_wind_gust_speed": {"label": "Expected Wind Gust Speed (mph)", "weather_key": "wind_gusts_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
+    "expected_cloud_cover": {"label": "Expected Cloud Cover (%)", "weather_key": "cloud_cover", "min": 0.0, "max": 100.0, "init": 0.0, "step": 1.0, "input_object": None},
     "expected_visibility": {"label": "Expected Visibility (miles)", "weather_key": "visibility", "min": 0.0, "max": 1000.0, "init": 10.0, "step": 0.1, "input_object": None}
 }
 
@@ -30,14 +30,31 @@ airport_options = airport_df.apply(lambda row: f"{row['AIRPORT']} ({row['STATION
 st.set_page_config(page_title="Weather or Not",
                    page_icon="✈️",
                    layout="wide")
+# Force a minimum width on the sidebar
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {
+            min-width: 350px;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Weather or Not: Flight Delay Predictor")
 
 # --- Sidebar Inputs ---
 st.sidebar.header("Input Parameters")
 
-# Date input
-flight_date = st.sidebar.date_input("Date", datetime.date.today())
-flight_time = st.sidebar.time_input("Time", datetime.datetime.now().time())
+if "flight_date" not in st.session_state:
+    st.session_state.flight_date = datetime.date.today()
+if "flight_time" not in st.session_state:
+    # Truncate microseconds so it's a clean HH:MM:SS time
+    st.session_state.flight_time = datetime.datetime.now().replace(microsecond=0).time()
+
+# Date and Time input
+flight_date = st.sidebar.date_input("Date", key="flight_date")
+flight_time = st.sidebar.time_input("Time", key="flight_time")
 
 # Airport dropdowns (using placeholder data)
 origin_airport = st.sidebar.selectbox("Origin Airport", airport_options)
@@ -110,9 +127,26 @@ if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
     else:
         st.error("Could not find the selected airport in the dataset.")
 
-# Create Weather inputs on sidebar
-for key, params in weather_dict.items():
-    params["input_object"] = st.sidebar.number_input(
+# # Create Weather inputs on sidebar
+# for key, params in weather_dict.items():
+#     params["input_object"] = st.sidebar.number_input(
+#         label=params["label"],
+#         min_value=params["min"],
+#         max_value=params["max"],
+#         value=st.session_state[key],
+#         step=params["step"]
+#     )
+
+# Create Weather inputs on sidebar in two columns
+st.sidebar.markdown("### Expected Weather")
+weather_col1, weather_col2 = st.sidebar.columns(2)
+
+# We use a list of the columns to alternate between them
+cols = [weather_col1, weather_col2]
+
+for i, (key, params) in enumerate(weather_dict.items()):
+    # i % 2 will alternate between 0 and 1, switching the column for each input
+    params["input_object"] = cols[i % 2].number_input(
         label=params["label"],
         min_value=params["min"],
         max_value=params["max"],
