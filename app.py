@@ -53,17 +53,7 @@ pipeline, label_encoder, meta = load_artifacts()
 st.set_page_config(page_title="Weather or Not",
                    page_icon="✈️",
                    layout="wide")
-# Force a minimum width on the sidebar
-st.markdown(
-    """
-    <style>
-        [data-testid="stSidebar"] {
-            min-width: 350px;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
 st.title("Weather or Not: Flight Delay Predictor")
 
 st.header("Flight information")
@@ -137,27 +127,73 @@ if st.button("Fetch Weather Forecast", type="secondary"):
 
 # --- Main Content: Weather Inputs ---
 st.header("Expected Weather")
-w_col1, w_col2 = st.columns(2)
+# Outer columns: Origin (left), Divider (middle), Destination (right)
+col_orig, col_div, col_dest = st.columns([1, 0.05, 1])
 
-with w_col1:
+# Create the vertical divider using custom CSS inside the narrow middle column
+with col_div:
+    st.markdown(
+        """
+        <style>
+        .vertical-divider {
+            border-left: 2px solid rgba(128, 128, 128, 0.3);
+            height: 100%;
+            min-height: 450px; /* Ensures the line stretches down */
+            margin: auto;
+        }
+        </style>
+        <div class="vertical-divider"></div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# Calculate how to split the weather dictionary in half
+weather_items = list(weather_dict.items())
+half_idx = len(weather_items) // 2 + len(weather_items) % 2
+
+# Origin Block
+with col_orig:
     st.subheader("Departure (Origin)")
-    for key, params in weather_dict.items():
-        st.number_input(
-            label=params["label"], min_value=params["min"], max_value=params["max"],
-            value=st.session_state[f"orig_{key}"], step=params["step"], key=f"orig_{key}"
-        )
+    orig_c1, orig_c2 = st.columns(2)
 
-with w_col2:
+    # First half of inputs
+    with orig_c1:
+        for key, params in weather_items[:half_idx]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"orig_{key}"], step=params["step"], key=f"orig_{key}"
+            )
+    # Second half of inputs
+    with orig_c2:
+        for key, params in weather_items[half_idx:]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"orig_{key}"], step=params["step"], key=f"orig_{key}"
+            )
+
+# Destination Block
+with col_dest:
     st.subheader("Arrival (Destination)")
-    for key, params in weather_dict.items():
-        st.number_input(
-            label=params["label"], min_value=params["min"], max_value=params["max"],
-            value=st.session_state[f"dest_{key}"], step=params["step"], key=f"dest_{key}"
-        )
+    dest_c1, dest_c2 = st.columns(2)
+
+    # First half of inputs
+    with dest_c1:
+        for key, params in weather_items[:half_idx]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"dest_{key}"], step=params["step"], key=f"dest_{key}"
+            )
+    # Second half of inputs
+    with dest_c2:
+        for key, params in weather_items[half_idx:]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"dest_{key}"], step=params["step"], key=f"dest_{key}"
+            )
 
 # Center the predict button
 st.write("")
-predict_button = st.button("Predict Delay", type="primary", use_container_width=True)
+predict_button = st.button("Predict Delay", type="primary", use_container_width=False)
 
 # --- Dividing Line ---
 st.divider()
@@ -167,7 +203,7 @@ if predict_button:
     if pipeline is None:
         st.error("Model artifacts not found! Please place the joblib files in a 'model_export' folder next to app.py.")
     else:
-        # 1. Derive Temporal Features
+        # Derive Temporal Features
         dep_hour = flight_time.hour
         dep_hour_sin = math.sin(2 * math.pi * dep_hour / 24.0)
         dep_hour_cos = math.cos(2 * math.pi * dep_hour / 24.0)
@@ -180,7 +216,7 @@ if predict_button:
         days_to_holiday = 14
         flight_density = 100
 
-        # 2. Map Origin Weather
+        # Map Origin Weather
         orig_tmpf = st.session_state["orig_expected_temp"]
         orig_sknt = st.session_state["orig_expected_wind_speed"] * 0.868976 # wind speed in knots
         orig_vsby = st.session_state["orig_expected_visibility"]
@@ -192,7 +228,7 @@ if predict_button:
         orig_high_wind = 1 if orig_sknt > 20 else 0
         orig_gusting = 1 if orig_gust > 0 else 0
 
-        # 3. Map Destination Weather
+        # Map Destination Weather
         dest_tmpf = st.session_state["dest_expected_temp"]
         dest_sknt = st.session_state["dest_expected_wind_speed"] * 0.868976
         dest_vsby = st.session_state["dest_expected_visibility"]
@@ -204,12 +240,12 @@ if predict_button:
         dest_high_wind = 1 if dest_sknt > 20 else 0
         dest_gusting = 1 if dest_gust > 0 else 0
 
-        # 4. Calculate Deltas
+        # Calculate Deltas
         delta_tmpf = abs(orig_tmpf - dest_tmpf)
         delta_sknt = abs(orig_sknt - dest_sknt)
         delta_vsby = abs(orig_vsby - dest_vsby)
 
-        # 5. Build Input DataFrame
+        # Build Input DataFrame
         input_data = {
             "ORIG_tmpf": orig_tmpf, "ORIG_dwpf": orig_dwpf, "ORIG_relh": orig_relh,
             "ORIG_sknt": orig_sknt, "ORIG_vsby": orig_vsby, "ORIG_mslp": orig_mslp,
@@ -226,14 +262,14 @@ if predict_button:
 
         X_input = pd.DataFrame([input_data])[meta["all"]]
 
-        # 6. Make Predictions
+        # Make Predictions
         pred_encoded = pipeline.predict(X_input)[0]
         pred_label = label_encoder.inverse_transform([pred_encoded])[0]
         prob = pipeline.predict_proba(X_input)[0]
         delay_prob = prob[1] if len(prob) > 1 else prob[0]
         delay_prob_percent = round(delay_prob * 100, 1)
 
-        # 7. UI Output
+        # UI Output
         res_col1, res_col2 = st.columns([1, 2])
 
         with res_col1:
