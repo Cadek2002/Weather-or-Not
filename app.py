@@ -12,6 +12,8 @@ def meters_to_miles(meters):
     return meters * 0.000621371
 
 EXPORT_DIR = Path(__file__).parent / "model_export"
+# print(f"{EXPORT_DIR=}, {EXPORT_DIR.resolve()}")
+# print(f"Files in export dir: {list(EXPORT_DIR.glob('*'))}")
 
 @st.cache_resource
 def load_artifacts():
@@ -22,6 +24,8 @@ def load_artifacts():
         return pipeline, label_encoder, feature_meta
     except FileNotFoundError:
         return None, None, None
+
+pipeline, label_encoder, meta = load_artifacts()
 
 weather_dict = {
     "expected_temp": {"label": "Expected Temp (°F)", "weather_key": "temperature_2m", "min": -50.0, "max": 150.0, "init": 70.0, "step": 0.1, "input_object": None},
@@ -47,8 +51,6 @@ for prefix in ["orig_", "dest_"]:
 # Load the airport codes and airport names
 airport_df = pd.read_csv('airport_code_name_lookup.csv')
 airport_options = airport_df.apply(lambda row: f"{row['AIRPORT']} ({row['STATION NAME']})", axis=1).tolist()
-
-pipeline, label_encoder, meta = load_artifacts()
 
 st.set_page_config(page_title="Weather or Not",
                    page_icon="✈️",
@@ -112,7 +114,6 @@ def fetch_airport_weather(airport_str, target_date, target_time, prefix):
                     st.session_state[f"{prefix}{key}"] = meters_to_miles(interp_val)
                 else:
                     st.session_state[f"{prefix}{key}"] = interp_val
-                    print(f"{prefix}{key}, {interp_val=}")
             st.success(f"Successfully fetched weather for {airport_code}.")
         else:
             st.warning(f"Weather data for {airport_code} at the selected time is not available.")
