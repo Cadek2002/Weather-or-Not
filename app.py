@@ -4,9 +4,28 @@ import streamlit as st
 import pandas as pd
 import datetime
 import requests
+import math
+import joblib
+from pathlib import Path
 
 def meters_to_miles(meters):
     return meters * 0.000621371
+
+EXPORT_DIR = Path(__file__).parent / "model_export"
+# print(f"{EXPORT_DIR=}, {EXPORT_DIR.resolve()}")
+# print(f"Files in export dir: {list(EXPORT_DIR.glob('*'))}")
+
+@st.cache_resource
+def load_artifacts():
+    try:
+        pipeline = joblib.load(EXPORT_DIR / "flight_delay_pipeline.joblib")
+        label_encoder = joblib.load(EXPORT_DIR / "label_encoder.joblib")
+        feature_meta = joblib.load(EXPORT_DIR / "feature_metadata.joblib")
+        return pipeline, label_encoder, feature_meta
+    except FileNotFoundError:
+        return None, None, None
+
+pipeline, label_encoder, meta = load_artifacts()
 
 weather_dict = {
     "expected_temp": {"label": "Expected Temp (°F)", "weather_key": "temperature_2m", "min": -50.0, "max": 150.0, "init": 70.0, "step": 0.1, "input_object": None},
@@ -14,14 +33,20 @@ weather_dict = {
     "expected_wind_speed": {"label": "Expected Wind Speed (mph)", "weather_key": "wind_speed_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
     "expected_wind_gust_speed": {"label": "Expected Wind Gust Speed (mph)", "weather_key": "wind_gusts_10m", "min": 0.0, "max": 150.0, "init": 0.0, "step": 0.1, "input_object": None},
     "expected_cloud_cover": {"label": "Expected Cloud Cover (%)", "weather_key": "cloud_cover", "min": 0.0, "max": 100.0, "init": 0.0, "step": 1.0, "input_object": None},
-    "expected_visibility": {"label": "Expected Visibility (miles)", "weather_key": "visibility", "min": 0.0, "max": 1000.0, "init": 10.0, "step": 0.1, "input_object": None}
+    "expected_visibility": {"label": "Expected Visibility (miles)", "weather_key": "visibility", "min": 0.0, "max": 1000.0, "init": 10.0, "step": 0.1, "input_object": None},
+    "expected_dew_point": {"label": "Expected Dew Point (°F)", "weather_key": "dew_point_2m", "min": -50.0, "max": 150.0, "init": 65.0, "step": 0.1, "input_object": None},
+    "expected_relative_humidity": {"label": "Expected Relative Humidity (%)", "weather_key": "relative_humidity_2m", "min": 0.0, "max": 100.0, "init": 50.0, "step": 1.0, "input_object": None},
+    "expected_pressure": {"label": "Expected Pressure (hPa)", "weather_key": "pressure_msl", "min": 800.0, "max": 1100.0, "init": 1013.25, "step": 0.1, "input_object": None},
 }
 
 # --- Initialize session state for weather inputs ---
+# For both origin and destination
 # This ensures the values don't reset when the page reruns
-for key, params in weather_dict.items():
-    if key not in st.session_state:
-        st.session_state[key] = params["init"]
+for prefix in ["orig_", "dest_"]:
+    for key, params in weather_dict.items():
+        state_key = f"{prefix}{key}"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = params["init"]
 
 # Load the airport codes and airport names
 airport_df = pd.read_csv('airport_code_name_lookup.csv')
@@ -30,167 +55,248 @@ airport_options = airport_df.apply(lambda row: f"{row['AIRPORT']} ({row['STATION
 st.set_page_config(page_title="Weather or Not",
                    page_icon="✈️",
                    layout="wide")
-# Force a minimum width on the sidebar
-st.markdown(
-    """
-    <style>
-        [data-testid="stSidebar"] {
-            min-width: 350px;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
 st.title("Weather or Not: Flight Delay Predictor")
 
-# --- Sidebar Inputs ---
-st.sidebar.header("Input Parameters")
+st.header("Flight information")
+col_date, col_time = st.columns(2)
+# date and time row
+flight_date = col_date.date_input("Date", key="flight_date")
+flight_time = col_time.time_input("Time", key="flight_time")
+# airport row
+col_origin, col_destination = st.columns(2)
+origin_airport = col_origin.selectbox("Origin Airport", airport_options)
+dest_airport = col_destination.selectbox("Destination Airport", airport_options)
 
-if "flight_date" not in st.session_state:
-    st.session_state.flight_date = datetime.date.today()
-if "flight_time" not in st.session_state:
-    # Truncate microseconds so it's a clean HH:MM:SS time
-    st.session_state.flight_time = datetime.datetime.now().replace(microsecond=0).time()
+def fetch_airport_weather(airport_str, target_date, target_time, prefix):
+    airport_code = airport_str.split(" ")[0]
+    airport_data = airport_df[airport_df['AIRPORT'] == airport_code]
 
-# Date and Time input
-flight_date = st.sidebar.date_input("Date", key="flight_date")
-flight_time = st.sidebar.time_input("Time", key="flight_time")
+    if airport_data.empty:
+        st.error(f"Could not find {airport_code} in the dataset.")
+        return
 
-# Airport dropdowns (using placeholder data)
-origin_airport = st.sidebar.selectbox("Origin Airport", airport_options)
-dest_airport = st.sidebar.selectbox("Destination Airport", airport_options)
+    lat = airport_data.iloc[0]['LAT']
+    lon = airport_data.iloc[0]['LON']
+    hourly_vars = ("temperature_2m,precipitation_probability,precipitation,rain,snowfall,cloud_cover,"
+                   "wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,dew_point_2m,"
+                   "relative_humidity_2m,pressure_msl")
 
-# --- Automatic weather fetching ---
-if st.sidebar.button("Fetch Weather Forecast", type="secondary"):
-    # Get the FAA code from the dropdown selection
-    origin_code = origin_airport.split(" ")[0]
-    dest_code = dest_airport.split(" ")[0]
-    print(origin_code)
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+           f"&hourly={hourly_vars}&temperature_unit=fahrenheit&precipitation_unit=inch"
+           f"&wind_speed_unit=mph&timezone=auto")
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        weather_data = response.json()
 
-    # Get the LAT/LON for the origin airport
-    airport_data = airport_df[airport_df['AIRPORT'] == origin_code]
-    if not airport_data.empty:
-        lat = airport_data.iloc[0]['LAT']
-        lon = airport_data.iloc[0]['LON']
-        print(lat, lon)
+        target_hour = target_time.strftime('%H:00')
+        target_datetime_str = f'{target_date.isoformat()}T{target_hour}'
 
-        # Call the Open-Meteo API
-        # https://open-meteo.com/en/docs
-        # url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto"
-        hourly_vars = "temperature_2m,precipitation_probability,precipitation,rain,snowfall,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&hourly={hourly_vars}"
-            f"&temperature_unit=fahrenheit"
-            f"&precipitation_unit=inch"
-            f"&wind_speed_unit=mph"
-            f"&timezone=auto"
-        )
-        try:
-            response = requests.get(url)
-            response.raise_for_status()  # Check if the request was successful
-            weather_data = response.json()
-            print(weather_data)
-            print(weather_data['hourly'].keys())
-            
-            # Format our input timing to match API time format
-            target_hour = flight_time.strftime('%H:00')
-            target_datetime_str = f'{flight_date.isoformat()}T{target_hour}'
+        delta = datetime.timedelta(hours=1)
+        flight_time_plus1 = (datetime.datetime.combine(target_date, target_time) + delta).time()
+        target_hour_post = flight_time_plus1.strftime('%H:00')
+        target_datetime_str_post = f'{target_date.isoformat()}T{target_hour_post}'
 
-            # For imputing exact time weather
-            delta = datetime.timedelta(hours=1)
-            flight_time_plus1 = (datetime.datetime.combine(flight_date, flight_time) + delta).time()
-            target_hour_post = flight_time_plus1.strftime('%H:00')
-            target_datetime_str_post = f'{flight_date.isoformat()}T{target_hour_post}'
+        times = weather_data['hourly']['time']
+        if target_datetime_str in times and target_datetime_str_post in times:
+            index = times.index(target_datetime_str)
+            index_post = times.index(target_datetime_str_post)
+            factor = (target_time.minute) / 60
 
-            times = weather_data['hourly']['time']
-            if target_datetime_str in times and target_datetime_str_post in times:
-                for key, params in weather_dict.items():
-                    # Update the expected weather inputs
-                    weather_api_key = params["weather_key"]
-                    index = times.index(target_datetime_str)
-                    index_post = times.index(target_datetime_str_post)
-                    factor = (flight_time.minute) / 60  # Proportion of the hour that has passed
-                    # To impute the exact time weather with a weighted average of the current and next hour
-                    if key == "expected_visibility":
-                        # Convert visibility from meters to miles for just visibility
-                        st.session_state[key] = meters_to_miles((1 - factor) * weather_data['hourly'][weather_api_key][index]
-                                              + factor * weather_data['hourly'][weather_api_key][index_post])
-                    else:
-                        st.session_state[key] = ((1 - factor) * weather_data['hourly'][weather_api_key][index]
-                                                  + factor * weather_data['hourly'][weather_api_key][index_post])
-            else:
-                st.warning("Weather data for the selected date and time is not available.")
-        except requests.RequestException as e:
-            st.error(f"Error fetching weather data: {e}")
-    else:
-        st.error("Could not find the selected airport in the dataset.")
+            for key, params in weather_dict.items():
+                weather_api_key = params["weather_key"]
+                val1 = weather_data['hourly'][weather_api_key][index]
+                val2 = weather_data['hourly'][weather_api_key][index_post]
+                interp_val = (1 - factor) * val1 + factor * val2
 
-# # Create Weather inputs on sidebar
-# for key, params in weather_dict.items():
-#     params["input_object"] = st.sidebar.number_input(
-#         label=params["label"],
-#         min_value=params["min"],
-#         max_value=params["max"],
-#         value=st.session_state[key],
-#         step=params["step"]
-#     )
+                if key == "expected_visibility":
+                    st.session_state[f"{prefix}{key}"] = meters_to_miles(interp_val)
+                else:
+                    st.session_state[f"{prefix}{key}"] = interp_val
+            st.success(f"Successfully fetched weather for {airport_code}.")
+        else:
+            st.warning(f"Weather data for {airport_code} at the selected time is not available.")
+    except requests.RequestException as e:
+        st.error(f"Error fetching weather data for {airport_code}: {e}")
 
-# Create Weather inputs on sidebar in two columns
-st.sidebar.markdown("### Expected Weather")
-weather_col1, weather_col2 = st.sidebar.columns(2)
+# Fetch Weather Button
+if st.button("Fetch Weather Forecast", type="secondary"):
+    with st.spinner("Fetching weather from Open-Meteo..."):
+        fetch_airport_weather(origin_airport, flight_date, flight_time, "orig_")
+        fetch_airport_weather(dest_airport, flight_date, flight_time, "dest_")
 
-# We use a list of the columns to alternate between them
-cols = [weather_col1, weather_col2]
+# --- Main Content: Weather Inputs ---
+st.header("Expected Weather")
+# Outer columns: Origin (left), Divider (middle), Destination (right)
+col_orig, col_div, col_dest = st.columns([1, 0.05, 1])
 
-for i, (key, params) in enumerate(weather_dict.items()):
-    # i % 2 will alternate between 0 and 1, switching the column for each input
-    params["input_object"] = cols[i % 2].number_input(
-        label=params["label"],
-        min_value=params["min"],
-        max_value=params["max"],
-        value=st.session_state[key],
-        step=params["step"]
+# Create the vertical divider using custom CSS inside the narrow middle column
+with col_div:
+    st.markdown(
+        """
+        <style>
+        .vertical-divider {
+            border-left: 2px solid rgba(128, 128, 128, 0.3);
+            height: 100%;
+            min-height: 450px; /* Ensures the line stretches down */
+            margin: auto;
+        }
+        </style>
+        <div class="vertical-divider"></div>
+        """,
+        unsafe_allow_html=True
     )
 
-# Predict button
-predict_button = st.sidebar.button("Predict Delay", type="primary")
+# Calculate how to split the weather dictionary in half
+weather_items = list(weather_dict.items())
+half_idx = len(weather_items) // 2 + len(weather_items) % 2
 
-# --- Main Content Area ---
-# if predict_button is clicked, show the prediction results
+# Origin Block
+with col_orig:
+    st.subheader("Departure (Origin)")
+    orig_c1, orig_c2 = st.columns(2)
+
+    # First half of inputs
+    with orig_c1:
+        for key, params in weather_items[:half_idx]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"orig_{key}"], step=params["step"], key=f"orig_{key}"
+            )
+    # Second half of inputs
+    with orig_c2:
+        for key, params in weather_items[half_idx:]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"orig_{key}"], step=params["step"], key=f"orig_{key}"
+            )
+
+# Destination Block
+with col_dest:
+    st.subheader("Arrival (Destination)")
+    dest_c1, dest_c2 = st.columns(2)
+
+    # First half of inputs
+    with dest_c1:
+        for key, params in weather_items[:half_idx]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"dest_{key}"], step=params["step"], key=f"dest_{key}"
+            )
+    # Second half of inputs
+    with dest_c2:
+        for key, params in weather_items[half_idx:]:
+            st.number_input(
+                label=params["label"], min_value=params["min"], max_value=params["max"],
+                value=st.session_state[f"dest_{key}"], step=params["step"], key=f"dest_{key}"
+            )
+
+# Center the predict button
+st.write("")
+predict_button = st.button("Predict Delay", type="primary", use_container_width=False)
+
+# --- Dividing Line ---
+st.divider()
+
+# --- Model Output Area ---
 if predict_button:
-    # Creating two columns for the output layout
-    col1, col2 = st.columns([1, 2])
+    if pipeline is None:
+        st.error("Model artifacts not found! Please place the joblib files in a 'model_export' folder next to app.py.")
+    else:
+        # Derive Temporal Features
+        dep_hour = flight_time.hour
+        dep_hour_sin = math.sin(2 * math.pi * dep_hour / 24.0)
+        dep_hour_cos = math.cos(2 * math.pi * dep_hour / 24.0)
+        dep_dow = flight_date.weekday()
+        dep_month = flight_date.month
+        is_weekend = 1 if dep_dow >= 5 else 0
+        rush_hour = 1 if (6 <= dep_hour <= 9) or (15 <= dep_hour <= 18) else 0
 
-    # Placeholder logic for ui demo
-    # TODO: replace with actual model
-    predicted_delay_mins = 25
+        # Placeholders for future logic updates
+        days_to_holiday = 14
+        flight_density = 100
 
-    with col1:
-        st.subheader("Prediction")
-        # st.metric is great for highlighting a single important number
-        st.metric(
-            label="Estimated Delay",
-            value=f"{predicted_delay_mins} mins",
-            delta="Weather Impact",
-            delta_color="inverse"
-        )
+        # Map Origin Weather
+        orig_tmpf = st.session_state["orig_expected_temp"]
+        orig_sknt = st.session_state["orig_expected_wind_speed"] * 0.868976 # wind speed in knots
+        orig_vsby = st.session_state["orig_expected_visibility"]
+        orig_gust = st.session_state["orig_expected_wind_gust_speed"]
+        orig_dwpf = st.session_state["orig_expected_dew_point"]
+        orig_relh = st.session_state["orig_expected_relative_humidity"]
+        orig_mslp = st.session_state["orig_expected_pressure"]
+        orig_low_vis = 1 if orig_vsby < 3 else 0
+        orig_high_wind = 1 if orig_sknt > 20 else 0
+        orig_gusting = 1 if orig_gust > 0 else 0
 
-    # TODO: determine what data we would actually show here
-    with col2:
-        st.subheader("Delay Probability")
+        # Map Destination Weather
+        dest_tmpf = st.session_state["dest_expected_temp"]
+        dest_sknt = st.session_state["dest_expected_wind_speed"] * 0.868976
+        dest_vsby = st.session_state["dest_expected_visibility"]
+        dest_gust = st.session_state["dest_expected_wind_gust_speed"]
+        dest_dwpf = st.session_state["dest_expected_dew_point"]
+        dest_relh = st.session_state["dest_expected_relative_humidity"]
+        dest_mslp = st.session_state["dest_expected_pressure"]
+        dest_low_vis = 1 if dest_vsby < 3 else 0
+        dest_high_wind = 1 if dest_sknt > 20 else 0
+        dest_gusting = 1 if dest_gust > 0 else 0
 
-        # Creating placeholder dummy data for the chart
-        chart_data = pd.DataFrame({
-            "Probability (%)": [15, 20, 45, 15, 5],
-            "Delay Range": ["On Time", "1-15 mins", "15-30 mins", "30-60 mins", "60+ mins"]
-        })
-        chart_data.set_index("Delay Range", inplace=True)
+        # Calculate Deltas
+        delta_tmpf = abs(orig_tmpf - dest_tmpf)
+        delta_sknt = abs(orig_sknt - dest_sknt)
+        delta_vsby = abs(orig_vsby - dest_vsby)
 
-        # Displaying a bar chart
-        st.bar_chart(chart_data)
+        # Build Input DataFrame
+        input_data = {
+            "ORIG_tmpf": orig_tmpf, "ORIG_dwpf": orig_dwpf, "ORIG_relh": orig_relh,
+            "ORIG_sknt": orig_sknt, "ORIG_vsby": orig_vsby, "ORIG_mslp": orig_mslp,
+            "DEST_tmpf": dest_tmpf, "DEST_dwpf": dest_dwpf, "DEST_relh": dest_relh,
+            "DEST_sknt": dest_sknt, "DEST_vsby": dest_vsby, "DEST_mslp": dest_mslp,
+            "DELTA_tmpf": delta_tmpf, "DELTA_sknt": delta_sknt, "DELTA_vsby": delta_vsby,
+            "DEP_HOUR_SIN": dep_hour_sin, "DEP_HOUR_COS": dep_hour_cos,
+            "DAYS_TO_HOLIDAY": days_to_holiday, "FLIGHT_DENSITY": flight_density,
+            "IS_WEEKEND": is_weekend, "RUSH_HOUR": rush_hour,
+            "ORIG_LOW_VIS": orig_low_vis, "ORIG_HIGH_WIND": orig_high_wind, "ORIG_GUSTING": orig_gusting,
+            "DEST_LOW_VIS": dest_low_vis, "DEST_HIGH_WIND": dest_high_wind, "DEST_GUSTING": dest_gusting,
+            "DEP_DOW": dep_dow, "DEP_MONTH": dep_month,
+        }
+
+        X_input = pd.DataFrame([input_data])[meta["all"]]
+
+        # Make Predictions
+        pred_encoded = pipeline.predict(X_input)[0]
+        pred_label = label_encoder.inverse_transform([pred_encoded])[0]
+        prob = pipeline.predict_proba(X_input)[0]
+        delay_prob = prob[1] if len(prob) > 1 else prob[0]
+        delay_prob_percent = round(delay_prob * 100, 1)
+
+        # UI Output
+        res_col1, res_col2 = st.columns([1, 2])
+
+        with res_col1:
+            st.subheader("Prediction")
+            if pred_label == 1 or str(pred_label).lower() in ["delay", "delayed", "yes", "true"]:
+                status = "Delayed"
+                status_color = "inverse"
+            else:
+                status = "On Time"
+                status_color = "normal"
+
+            st.metric(
+                label="Flight Status",
+                value=status,
+                delta=f"{delay_prob_percent}% risk of delay",
+                delta_color=status_color
+            )
+
+        with res_col2:
+            st.subheader("Delay Probability")
+            chart_data = pd.DataFrame({
+                "Probability (%)": [round(prob[0] * 100, 1), delay_prob_percent],
+                "Outcome": ["On Time", "Delayed"]
+            })
+            chart_data.set_index("Outcome", inplace=True)
+            st.bar_chart(chart_data)
 
 else:
-    # This shows when the app first loads before the predict button is clicked
-    st.info("Enter the flight parameters in the sidebar and click 'Predict Delay' to see the results.")
+    st.info("Enter the flight parameters above and click 'Predict Delay' to see the results.")
