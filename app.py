@@ -321,6 +321,7 @@ if predict_button:
             })
             chart_data.set_index("Outcome", inplace=True)
             st.bar_chart(chart_data)
+            st.info(days_to_holiday)
 
 else:
     st.info("Enter the flight parameters above and click 'Predict Delay' to see the results.")
