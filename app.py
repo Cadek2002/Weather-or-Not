@@ -5,6 +5,7 @@ import pandas as pd
 import datetime
 import requests
 import math
+import holidays
 import joblib
 from pathlib import Path
 
@@ -199,6 +200,8 @@ predict_button = st.button("Predict Delay", type="primary", use_container_width=
 # --- Dividing Line ---
 st.divider()
 
+
+
 # --- Model Output Area ---
 if predict_button:
     if pipeline is None:
@@ -214,8 +217,10 @@ if predict_button:
         rush_hour = 1 if (6 <= dep_hour <= 9) or (15 <= dep_hour <= 18) else 0
 
         # Placeholders for future logic updates
-        days_to_holiday = 14
-        flight_density = 100
+
+
+
+        flight_density = 75
 
         # Map Origin Weather
         orig_tmpf = st.session_state["orig_expected_temp"]
@@ -245,6 +250,25 @@ if predict_button:
         delta_tmpf = abs(orig_tmpf - dest_tmpf)
         delta_sknt = abs(orig_sknt - dest_sknt)
         delta_vsby = abs(orig_vsby - dest_vsby)
+
+        #Days to holiday tracker, osrt of from FFN pipeline
+        def get_days_to_next_holiday(timestamp=flight_date):
+            timestamp = pd.to_datetime(timestamp)
+            year = timestamp.year
+            #only US holidays for now, though
+            us_holidays = holidays.US(years=[year, year+1])
+            holiday_dates = sorted(us_holidays.keys())
+            holiday_series = pd.to_datetime(holiday_dates)
+
+            future_holidays = holiday_series[holiday_series >= ts.normalize()]
+            if not future_holidays.empty:
+                #grab closest holiday in the future
+                next_h = future_holidays[0]
+                return (next_h - timestamp).days
+            
+            return 14 #should never happen but who knows
+
+        days_to_holiday = get_days_to_next_holiday(flight_date)
 
         # Build Input DataFrame
         input_data = {
