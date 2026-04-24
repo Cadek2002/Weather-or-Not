@@ -260,7 +260,7 @@ if predict_button:
             holiday_dates = sorted(us_holidays.keys())
             holiday_series = pd.to_datetime(holiday_dates)
 
-            future_holidays = holiday_series[holiday_series >= ts.normalize()]
+            future_holidays = holiday_series[holiday_series >= timestamp.normalize()]
             if not future_holidays.empty:
                 #grab closest holiday in the future
                 next_h = future_holidays[0]
