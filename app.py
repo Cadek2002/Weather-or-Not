@@ -265,7 +265,7 @@ if predict_button:
 
         # Make Predictions
         pred_encoded = pipeline.predict(X_input)[0]
-        pred_label = label_encoder.inverse_transform([pred_encoded])[0]
+        pred_label = label_encoder.transform([pred_encoded])[0]
         prob = pipeline.predict_proba(X_input)[0]
         delay_prob = prob[1] if len(prob) > 1 else prob[0]
         delay_prob_percent = round(delay_prob * 100, 1)
