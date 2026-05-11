@@ -14,3 +14,6 @@ Flight delay prediction models and prototype interface.
 Run `streamlit run app.py` to start running the prototype web app locally.
 You may need to download necessary dependencies first, which can be done by 
 running `pip install -r requirements.txt` in the terminal.
+
+The steamlit hosted webapp is available at https://weather-or-not-ish48lyykk4yi3g4hacmbr.streamlit.app/
+(though it may be required to spin up depending on the frequency of use).
